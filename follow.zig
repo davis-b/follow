@@ -44,7 +44,9 @@ pub fn main() !void {
     const files = argv[0..file_count];
     const commands = argv[file_count..];
 
-    var inotify = inotify_bridge.inotify.init(allocator) catch |err| return warn("Failed to initialize inotify instance: {}\n", err);
+    var inotify = inotify_bridge.inotify.init(allocator) catch
+        |err| return warn("Failed to initialize inotify instance: {}\n", err);
+    defer inotify.deinit();
 
     for (files) |filename| {
         inotify.add_watch(filename, inotify_watch_flags) catch
