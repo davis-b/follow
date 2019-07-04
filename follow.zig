@@ -64,15 +64,16 @@ fn filewrite(filename: []const u8) !void {
 
 fn wait_and_react(inotify: *inotify_bridge.inotify) void {
     filewrite("test/test2.txt"[0..]) catch |err| warn("{}\n", err);
-    filewrite("test/12345678910.txt"[0..]) catch |err| warn("{}\n", err);
-    filewrite("test/t.txt"[0..]) catch |err| warn("{}\n", err);
+    //filewrite("test/12345678910.txt"[0..]) catch |err| warn("{}\n", err);
+    filewrite("test.txt"[0..]) catch |err| warn("{}\n", err);
     while (true) {
-        const event: *inotify_bridge.inotify_event = inotify.next_event();
-        assert(event == &inotify.event);
-        if (valid_event(event)) {
-            warn("{}\n", event);
-            if (event.name) |filename| {} else {}
-        }
+        const event = inotify.next_event();
+        warn("{}\n", event);
+        // assert(event == &inotify.event);
+        // if (valid_event(event)) {
+        //   warn("{}\n", event);
+        //  if (event.name) |filename| {} else {}
+        // }
         os.exit(1);
     }
 }

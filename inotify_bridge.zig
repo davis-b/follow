@@ -40,13 +40,13 @@ pub const inotify_event = struct {
     name: ?[]u8,
 };
 
-const extra_inotify_event = struct {
-    event: inotify_event,
+const expanded_inotify_event = struct {
+    event: *inotify_event,
     full_path_name: []u8,
 };
 
 // Buffer must be evenly divisble by the alignment of inotify_event
-// for when we @alignCast a buffer.ptr later on.
+// for when we @alignCast a buffer ptr later on.
 fn find_buffer_length() comptime_int {
     var i_buffer_length: comptime_int = os.PATH_MAX + @sizeOf(std_inotify_event) + 1;
     while (i_buffer_length % @alignOf(std_inotify_event) != 0) {
@@ -59,6 +59,9 @@ pub const buffer_length = find_buffer_length();
 pub const inotify = struct {
     const Self = @This();
     event_buffer: [buffer_length]u8 = undefined,
+    // Inotify can track one directory with no subdirs
+    // With this in mind, we should be prepared to track up to two full filenames
+    name_buffer: [os.PATH_MAX * 2 + 1]u8 = undefined,
     event: inotify_event = undefined,
     //   allocator: *Allocator,
     inotify_fd: i32,
@@ -75,7 +78,6 @@ pub const inotify = struct {
     pub fn deinit(self: *Self) void {
         // allocator.destroy
         self.hashmap.deinit();
-        //self.event_buffer = undefined;
         //self.remove_watch();
     }
 
@@ -89,12 +91,26 @@ pub const inotify = struct {
         return self.hashmap.remove(watch_descriptor);
     }
 
-    pub fn next_event(self: *Self) *inotify_event {
-        // todo: add attribute to event, watched_name
+    pub fn next_event(self: *Self) expanded_inotify_event {
+        // todo: Reuse event object.
+        // Could even return an amalgamation of expanded and regular events
         const read_result = os.linux.read(self.inotify_fd, &self.event_buffer, self.event_buffer.len);
         read_event(&self.event_buffer, &self.event);
-        //self.event.watched_name = self.hashmap.getValue orelse unreachable;
-        return &self.event;
+        const watched_name = self.hashmap.getValue(self.event.wd) orelse unreachable;
+        for (watched_name) |i, n| {
+            self.name_buffer[n] = i;
+        }
+        if (self.event.name) |filename| {
+            self.name_buffer[watched_name.len] = '/';
+            for (filename) |i, n| {
+                self.name_buffer[watched_name.len + 1 + n] = i;
+            }
+        }
+        const ev = expanded_inotify_event{
+            .event = &self.event,
+            .full_path_name = &self.name_buffer,
+        };
+        return ev;
     }
 
     pub fn read_events(self: *Self) void {
