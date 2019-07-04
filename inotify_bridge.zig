@@ -54,15 +54,7 @@ fn find_buffer_length() comptime_int {
     }
     return i_buffer_length;
 }
-//pub const buffer_length = find_buffer_length();
-pub const buffer_length = 40960;
-
-const temp_holder = struct {
-    var ptr: [*]u8 = undefined;
-    var ptr_end: [*]u8 = undefined;
-    var event_number: u32 = 0;
-    var first: bool = true;
-};
+pub const buffer_length = find_buffer_length();
 
 pub const inotify = struct {
     const Self = @This();
@@ -95,28 +87,6 @@ pub const inotify = struct {
     pub fn remove_watch(self: *Self, watch_descriptor: i32) ?self.hashmap.KV {
         os.inotify_rm_watch(self.inotify_fd, watch_descriptor);
         return self.hashmap.remove(watch_descriptor);
-    }
-
-    // These three functions serve the same purpose
-
-    pub fn next_event_unnecessary(self: *Self) *inotify_event {
-        if (temp_holder.first) {
-            temp_holder.ptr = self.event_buffer[0..].ptr;
-            temp_holder.ptr_end = temp_holder.ptr + self.event_buffer.len;
-            temp_holder.first = false;
-        }
-        // is this necessary?
-        if ((@ptrToInt(temp_holder.ptr) < @ptrToInt(temp_holder.ptr_end)) and temp_holder.event_number > 0) {
-            std.debug.warn("x\n");
-            temp_holder.ptr += @sizeOf(inotify_event);
-            read_event(temp_holder.ptr, &self.event);
-            return &self.event;
-        }
-        temp_holder.ptr = &self.event_buffer;
-        temp_holder.event_number += 1;
-        const read_result = os.linux.read(self.inotify_fd, &self.event_buffer, self.event_buffer.len);
-        read_event(&self.event_buffer, &self.event);
-        return &self.event;
     }
 
     pub fn next_event(self: *Self) *inotify_event {
