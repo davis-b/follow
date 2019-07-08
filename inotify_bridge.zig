@@ -40,9 +40,9 @@ pub const inotify_event = struct {
     name: ?[]u8,
 };
 
-const expanded_inotify_event = struct {
+pub const expanded_inotify_event = struct {
     event: *inotify_event,
-    full_path_name: []u8,
+    watched_name: []u8,
 };
 
 // Buffer must be evenly divisble by the alignment of inotify_event
@@ -59,17 +59,13 @@ pub const buffer_length = find_buffer_length();
 pub const inotify = struct {
     const Self = @This();
     event_buffer: [buffer_length]u8 = undefined,
-    // Inotify can track one directory with no subdirs
-    // With this in mind, we should be prepared to track up to two full filenames
-    name_buffer: [os.PATH_MAX * 2 + 1]u8 = undefined,
     event: inotify_event = undefined,
-    //   allocator: *Allocator,
+    expanded_event: expanded_inotify_event = undefined,
     inotify_fd: i32,
     hashmap: hashmap_type,
 
     pub fn init(allocator: *mem.Allocator) !inotify {
         return inotify{
-            //          .allocator = allocator,
             .inotify_fd = try os.inotify_init1(0),
             .hashmap = hashmap_type.init(allocator),
         };
@@ -91,30 +87,16 @@ pub const inotify = struct {
         return self.hashmap.remove(watch_descriptor);
     }
 
-    pub fn next_event(self: *Self) expanded_inotify_event {
-        // todo: Reuse event object.
-        // Could even return an amalgamation of expanded and regular events
+    pub fn next_event(self: *Self) *expanded_inotify_event {
         const read_result = os.linux.read(self.inotify_fd, &self.event_buffer, self.event_buffer.len);
         read_event(&self.event_buffer, &self.event);
-        const watched_name = self.hashmap.getValue(self.event.wd) orelse unreachable;
-        for (watched_name) |i, n| {
-            self.name_buffer[n] = i;
-        }
-        if (self.event.name) |filename| {
-            self.name_buffer[watched_name.len] = '/';
-            for (filename) |i, n| {
-                self.name_buffer[watched_name.len + 1 + n] = i;
-            }
-        }
-        const ev = expanded_inotify_event{
-            .event = &self.event,
-            .full_path_name = &self.name_buffer,
-        };
-        return ev;
+        self.expanded_event.event = &self.event;
+        self.expanded_event.watched_name = self.hashmap.getValue(self.event.wd) orelse unreachable;
+        return &self.expanded_event;
     }
 
-    pub fn read_events(self: *Self) void {
-        // todo: make async, suspend/resume
+    pub fn read_events_async(self: *Self) void {
+        // todo: make async
         var ptr = self.event_buffer[0..].ptr;
         const end_ptr = self.event_buffer.len;
         while (true) : (ptr = event_buffer[0..].ptr) {
@@ -133,20 +115,18 @@ pub const inotify = struct {
 
 // *****************************************************************
 
-const event_temp = struct {
-    var data: *std_inotify_event = undefined;
-};
+var event_temp: *std_inotify_event = undefined;
 
 pub fn read_event(bufferptr: [*]u8, event: *inotify_event) void {
     var ptr = @alignCast(@alignOf(std_inotify_event), bufferptr);
-    event_temp.data = @ptrCast(*std_inotify_event, ptr);
-    var name = @ptrCast([*]u8, &event_temp.data.nameaddr);
+    event_temp = @ptrCast(*std_inotify_event, ptr);
+    var name = @ptrCast([*]u8, &event_temp.nameaddr);
     const namelen = mem.len(u8, name);
 
-    event.wd = event_temp.data.wd;
-    event.mask = event_temp.data.mask;
-    event.cookie = event_temp.data.cookie;
-    event.len = event_temp.data.len;
+    event.wd = event_temp.wd;
+    event.mask = event_temp.mask;
+    event.cookie = event_temp.cookie;
+    event.len = event_temp.len;
     //event.name = name[0..namelen];
     event.name = if (event.len != 0) name[0..namelen] else null;
 }
