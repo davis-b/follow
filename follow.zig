@@ -172,7 +172,7 @@ fn concat_args(allocator: *std.mem.Allocator) ![][]u8 {
     return list_of_strings;
 }
 
-fn locate_needle_indexes(allocator: *std.mem.Allocator, needle: []const u8, haystack: [][]u8) ?[]usize {
+fn locate_needle_indexes(allocator: *std.mem.Allocator, needle: []const u8, haystack: [][]u8) !?[]usize {
     var needle_indexes: []usize = undefined;
     needle_indexes = try allocator.alloc(usize, haystack.len);
     for (needle_indexes) |*i| i.* = 0;
