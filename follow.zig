@@ -54,33 +54,10 @@ pub fn main() !void {
         inotify.add_watch(filename, inotify_watch_flags) catch
             |err| return warn("{} while trying to follow '{}'\n", err, filename);
     }
-    const filename_fill_flag_active = blk: {
-        for (user_commands) |cmd| {
-            if (std.mem.eql(u8, cmd, filename_fill_flag)) break :blk true;
-        }
-        break :blk false;
-    };
-    var fill_flag_indexes: []usize = undefined;
-    if (filename_fill_flag_active) {
-        fill_flag_indexes = allocator.alloc(usize, user_commands.len) catch unreachable;
-        for (fill_flag_indexes) |*i| i.* = 0;
-        var outer_index: usize = 0;
-        for (user_commands) |cmd, index| {
-            if (std.mem.eql(u8, cmd, filename_fill_flag)) {
-                fill_flag_indexes[outer_index] = index;
-                outer_index += 1;
-            }
-        }
-        var index_count: usize = 1;
-        for (fill_flag_indexes[1..]) |i| {
-            if (i == 0) break;
-            index_count += 1;
-        }
-        fill_flag_indexes = allocator.shrink(fill_flag_indexes, index_count);
-    }
-
+    const fill_flag_indexes_opt: ?[]usize = locate_needle_indexes(dallocator, filename_fill_flag[0..], user_commands);
+    defer if (fill_flag_indexes_opt) |ff_indexes| dallocator.free(ff_indexes);
     var envmap = std.process.getEnvMap(allocator) catch unreachable;
-    defer envmap.deinit();
+    // defer envmap.deinit(); // should not be necessary because we're passing an arena allocator
 
     //filewrite("test/test2.txt"[0..]) catch |err| warn("{}\n", err);
     filewrite("test/12345678910.txt"[0..]) catch |err| warn("{}\n", err);
@@ -93,7 +70,7 @@ pub fn main() !void {
 
     var full_event: *inotify_bridge.expanded_inotify_event = undefined;
 
-    if (filename_fill_flag_active) {
+    if (fill_flag_indexes_opt) |fill_flag_indexes| {
         var filepath: []u8 = undefined;
         while (true) {
             full_event = inotify.next_event();
@@ -218,4 +195,29 @@ fn concat_args_old(allocator: *std.mem.Allocator) ![][]u8 {
         list_of_strings[args.inner.index - 2] = string;
     }
     return list_of_strings;
+}
+
+fn locate_needle_indexes(allocator: *std.mem.Allocator, needle: []const u8, haystack: [][]u8) ?[]usize {
+    var needle_indexes: []usize = undefined;
+    needle_indexes = allocator.alloc(usize, haystack.len) catch unreachable;
+    for (needle_indexes) |*i| i.* = 0;
+    var outer_index: usize = 0;
+    for (haystack) |cmd, index| {
+        if (std.mem.eql(u8, cmd, needle)) {
+            needle_indexes[outer_index] = index;
+            outer_index += 1;
+        }
+    }
+    // no needles in haystack
+    if (outer_index == 0) {
+        allocator.free(needle_indexes);
+        return null;
+    }
+    var index_count: usize = 1;
+    for (needle_indexes[1..]) |i| {
+        if (i == 0) break;
+        index_count += 1;
+    }
+    needle_indexes = allocator.shrink(needle_indexes, index_count);
+    return needle_indexes;
 }
