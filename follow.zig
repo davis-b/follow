@@ -44,7 +44,7 @@ pub fn main() !void {
         }
     };
     const files = argv[0..file_count];
-    const commands = argv[file_count..];
+    const user_commands = argv[file_count..];
 
     var inotify = inotify_bridge.inotify.init(allocator) catch
         |err| return warn("Failed to initialize inotify instance: {}\n", err);
@@ -55,11 +55,30 @@ pub fn main() !void {
             |err| return warn("{} while trying to follow '{}'\n", err, filename);
     }
     const filename_fill_flag_active = blk: {
-        for (commands) |cmd| {
+        for (user_commands) |cmd| {
             if (std.mem.eql(u8, cmd, filename_fill_flag)) break :blk true;
         }
         break :blk false;
     };
+    var fill_flag_indexes: []usize = undefined;
+    if (filename_fill_flag_active) {
+        fill_flag_indexes = allocator.alloc(usize, user_commands.len) catch unreachable;
+        for (fill_flag_indexes) |*i| i.* = 0;
+        var outer_index: usize = 0;
+        for (user_commands) |cmd, index| {
+            if (std.mem.eql(u8, cmd, filename_fill_flag)) {
+                fill_flag_indexes[outer_index] = index;
+                outer_index += 1;
+            }
+        }
+        var index_count: usize = 1;
+        for (fill_flag_indexes[1..]) |i| {
+            if (i == 0) break;
+            index_count += 1;
+        }
+        fill_flag_indexes = allocator.shrink(fill_flag_indexes, index_count);
+    }
+
     var envmap = std.process.getEnvMap(allocator) catch unreachable;
     defer envmap.deinit();
 
@@ -67,41 +86,44 @@ pub fn main() !void {
     filewrite("test/12345678910.txt"[0..]) catch |err| warn("{}\n", err);
     //filewrite("test.txt"[0..]) catch |err| warn("{}\n", err);
 
-    var command: [3][]const u8 = undefined;
-    command[0] = "/bin/sh";
-    command[1] = "-c";
-    command[2] = "echo this should be replaced";
+    var execve_command: [3][]const u8 = undefined;
+    execve_command[0] = "/bin/sh";
+    execve_command[1] = "-c";
+    execve_command[2] = "echo this should be replaced";
 
     var full_event: *inotify_bridge.expanded_inotify_event = undefined;
-    var filepath: []u8 = undefined;
-    while (true) {
-        full_event = inotify.next_event();
-        warn("{}\n", full_event);
-        if (!valid_event(full_event.event)) continue;
-        if (full_event.event.name) |filename| {
-            filepath = try std.fs.path.joinPosix(dallocator, [_][]const u8{ full_event.watched_name, filename });
-            defer warn("can we defer to outer scope?\n");
-        } else {
-            filepath = full_event.watched_name;
-        }
-        defer if (full_event.event.len != 0) dallocator.free(filepath);
 
-        if (filename_fill_flag_active) {
-            //const filled_commands = replace(dallocator, filename_fill_flag, filepath, commands);
-        }
+    if (filename_fill_flag_active) {
+        var filepath: []u8 = undefined;
+        while (true) {
+            full_event = inotify.next_event();
+            if (!valid_event(full_event.event)) continue;
+            if (full_event.event.name) |filename| {
+                filepath = try std.fs.path.joinPosix(dallocator, [_][]const u8{ full_event.watched_name, filename });
+                // if it is possible to defer to the closing of one's outer scope, that would be great
+            } else {
+                filepath = full_event.watched_name;
+            }
+            defer if (full_event.event.len != 0) dallocator.free(filepath);
+            for (fill_flag_indexes) |index| {
+                user_commands[index] = filepath;
+            }
+            const argv_commands = try std.mem.join(dallocator, " ", user_commands);
+            defer dallocator.free(argv_commands);
+            execve_command[2] = argv_commands;
+            try run_command(dallocator, &execve_command, &envmap);
 
-        const argv_commands = try std.mem.join(dallocator, " ", commands);
+            break;
+        }
+    } else {
+        const argv_commands = try std.mem.join(dallocator, " ", user_commands);
         defer dallocator.free(argv_commands);
-        // try std.mem.replace(dallocator, "filename_fill_flag", argv_commands, filepath });
-        command[2] = argv_commands;
-        //const acmd = try std.mem.join(dallocator, " ", [_][]const u8{ argv_commands, filepath });
-        //defer dallocator.free(acmd);
-        //command[2] = acmd;
-        warn("running :  {}\n", command[0]);
-        warn("running :  {}\n", command[1]);
-        warn("running :  {}\n", command[2]);
-        //try run_command(dallocator, &command, &envmap);
-        break;
+        execve_command[2] = argv_commands;
+        while (true) {
+            full_event = inotify.next_event();
+            if (!valid_event(full_event.event)) continue;
+            try run_command(dallocator, &execve_command, &envmap);
+        }
     }
 }
 
@@ -122,16 +144,13 @@ fn filewrite(filename: []const u8) !void {
     try file.write("testydoodle\n");
 }
 
-fn replace(allocator: *std.mem.Allocator, replacee: []u8, replacement: []u8, original: []u8) void {
-    // do we want to modify the original or return a new copy?
-    // if we modify the original, we would need to make note of the indexes of each flag
-    for (argv) |index, word| {
-        if (std.mem.eql(u8, word, file_flag)) {
-            warn("replace this: {}\n", word);
-            // argv[index] = filename;
-        }
-    }
-}
+//fn replace_in_place(replacee: []const u8, replacement: []u8, original: [][]u8) void {
+//    for (original) |word, index| {
+//        if (std.mem.eql(u8, word, replacee)) {
+//            original[index] = replacement;
+//        }
+//    }
+//}
 
 fn valid_event(event: *inotify_bridge.inotify_event) bool {
     const counter = struct {
