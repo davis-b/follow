@@ -116,12 +116,6 @@ fn run_command(allocator: *std.mem.Allocator, command: [][]const u8, envmap: *st
     }
 }
 
-fn filewrite(filename: []const u8) !void {
-    const file = try std.fs.File.openWrite(filename);
-    defer file.close();
-    try file.write("testydoodle\n");
-}
-
 fn valid_event(event: *inotify_bridge.inotify_event) bool {
     const counter = struct {
         var count: u8 = 0;
@@ -198,4 +192,10 @@ fn locate_needle_indexes(allocator: *std.mem.Allocator, needle: []const u8, hays
     }
     needle_indexes = allocator.shrink(needle_indexes, index_count);
     return needle_indexes;
+}
+
+fn filewrite(filename: []const u8) !void {
+    const file = try std.fs.File.openWrite(filename);
+    defer file.close();
+    try file.write("");
 }
