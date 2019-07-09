@@ -164,8 +164,6 @@ fn enumerate_files(argv: [][]u8) InputError!max_tracked_items {
 
 fn concat_args(allocator: *std.mem.Allocator) ![][]u8 {
     const arg_count = os.argv.len;
-    // alloc returns a "list" of type, capable of holding x many of them
-    // so typeOf(alloc(i32, 10)[2]) == *i32
     const list_of_strings = try allocator.alloc([]u8, arg_count - 1);
 
     for (os.argv[1..arg_count]) |i, n| {
