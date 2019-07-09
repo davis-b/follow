@@ -56,18 +56,14 @@ pub fn main() !void {
     }
     const fill_flag_indexes_opt: ?[]usize = locate_needle_indexes(dallocator, filename_fill_flag[0..], user_commands);
     defer if (fill_flag_indexes_opt) |ff_indexes| dallocator.free(ff_indexes);
-    var envmap = std.process.getEnvMap(allocator) catch unreachable;
-    // defer envmap.deinit(); // should not be necessary because we're passing an arena allocator
 
-    //filewrite("test/test2.txt"[0..]) catch |err| warn("{}\n", err);
-    filewrite("test/12345678910.txt"[0..]) catch |err| warn("{}\n", err);
-    //filewrite("test.txt"[0..]) catch |err| warn("{}\n", err);
+    var execve_command = [_][]const u8{
+        "/bin/sh",
+        "-c",
+        "echo this should be replaced",
+    };
 
-    var execve_command: [3][]const u8 = undefined;
-    execve_command[0] = "/bin/sh";
-    execve_command[1] = "-c";
-    execve_command[2] = "echo this should be replaced";
-
+    const envmap = std.process.getEnvMap(allocator) catch unreachable;
     var full_event: *inotify_bridge.expanded_inotify_event = undefined;
 
     if (fill_flag_indexes_opt) |fill_flag_indexes| {
@@ -89,8 +85,6 @@ pub fn main() !void {
             defer dallocator.free(argv_commands);
             execve_command[2] = argv_commands;
             try run_command(dallocator, &execve_command, &envmap);
-
-            break;
         }
     } else {
         const argv_commands = try std.mem.join(allocator, " ", user_commands);
@@ -103,7 +97,7 @@ pub fn main() !void {
     }
 }
 
-fn run_command(allocator: *std.mem.Allocator, command: [][]const u8, envmap: *std.BufMap) !void {
+fn run_command(allocator: *std.mem.Allocator, command: [][]const u8, envmap: *const std.BufMap) !void {
     const pid = try os.fork();
     if (pid == 0) {
         const err = os.execve(allocator, command, envmap);
