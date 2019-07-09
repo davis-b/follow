@@ -54,7 +54,7 @@ pub fn main() !void {
         inotify.add_watch(filename, inotify_watch_flags) catch
             |err| return warn("{} while trying to follow '{}'\n", err, filename);
     }
-    const fill_flag_indexes_opt: ?[]usize = locate_needle_indexes(dallocator, filename_fill_flag[0..], user_commands);
+    const fill_flag_indexes_opt: ?[]usize = try locate_needle_indexes(dallocator, filename_fill_flag[0..], user_commands);
     defer if (fill_flag_indexes_opt) |ff_indexes| dallocator.free(ff_indexes);
 
     var execve_command = [_][]const u8{
@@ -63,7 +63,7 @@ pub fn main() !void {
         "echo this should be replaced",
     };
 
-    const envmap = std.process.getEnvMap(allocator) catch unreachable;
+    const envmap = try std.process.getEnvMap(allocator);
     var full_event: *inotify_bridge.expanded_inotify_event = undefined;
 
     if (fill_flag_indexes_opt) |fill_flag_indexes| {
@@ -72,8 +72,10 @@ pub fn main() !void {
             full_event = inotify.next_event();
             if (!valid_event(full_event.event)) continue;
             if (full_event.event.name) |filename| {
-                filepath = try std.fs.path.joinPosix(dallocator, [_][]const u8{ full_event.watched_name, filename });
-                // if it is possible to defer to the closing of one's outer scope, that would be great
+                filepath = std.fs.path.joinPosix(dallocator, [_][]const u8{ full_event.watched_name, filename }) catch |err| {
+                    warn("Encountered '{}' while allocating memory for a concatenation of '{}' and '{}'\n", err, full_event.watched_name, filename);
+                    continue;
+                };
             } else {
                 filepath = full_event.watched_name;
             }
@@ -81,10 +83,16 @@ pub fn main() !void {
             for (fill_flag_indexes) |index| {
                 user_commands[index] = filepath;
             }
-            const argv_commands = try std.mem.join(dallocator, " ", user_commands);
+            const argv_commands = std.mem.join(dallocator, " ", user_commands) catch |err| {
+                warn("Encountered '{}' while allocating memory for a concatenation input commands\n", err);
+                continue;
+            };
             defer dallocator.free(argv_commands);
             execve_command[2] = argv_commands;
-            try run_command(dallocator, &execve_command, &envmap);
+            run_command(dallocator, &execve_command, &envmap) catch |err| {
+                warn("Encountered '{}' while forking before running command {}\n", err, argv_commands);
+                continue;
+            };
         }
     } else {
         const argv_commands = try std.mem.join(allocator, " ", user_commands);
@@ -92,7 +100,10 @@ pub fn main() !void {
         while (true) {
             full_event = inotify.next_event();
             if (!valid_event(full_event.event)) continue;
-            try run_command(dallocator, &execve_command, &envmap);
+            run_command(dallocator, &execve_command, &envmap) catch |err| {
+                warn("Encountered '{}' while forking before running command {}\n", err, argv_commands);
+                continue;
+            };
         }
     }
 }
@@ -165,7 +176,7 @@ fn concat_args(allocator: *std.mem.Allocator) ![][]u8 {
 
 fn locate_needle_indexes(allocator: *std.mem.Allocator, needle: []const u8, haystack: [][]u8) ?[]usize {
     var needle_indexes: []usize = undefined;
-    needle_indexes = allocator.alloc(usize, haystack.len) catch unreachable;
+    needle_indexes = try allocator.alloc(usize, haystack.len);
     for (needle_indexes) |*i| i.* = 0;
     var outer_index: usize = 0;
     for (haystack) |cmd, index| {
