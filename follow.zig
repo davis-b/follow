@@ -93,8 +93,7 @@ pub fn main() !void {
             break;
         }
     } else {
-        const argv_commands = try std.mem.join(dallocator, " ", user_commands);
-        defer dallocator.free(argv_commands);
+        const argv_commands = try std.mem.join(allocator, " ", user_commands);
         execve_command[2] = argv_commands;
         while (true) {
             full_event = inotify.next_event();
@@ -108,6 +107,8 @@ fn run_command(allocator: *std.mem.Allocator, command: [][]const u8, envmap: *st
     const pid = try os.fork();
     if (pid == 0) {
         const err = os.execve(allocator, command, envmap);
+        for (command) |cmd| warn("Error running '{}'\n", cmd);
+        warn("Error : '{}'\n", err);
     } else {
         const status = os.waitpid(pid, 0);
         // while status != what we're looking for { status = waitpid }
@@ -120,14 +121,6 @@ fn filewrite(filename: []const u8) !void {
     defer file.close();
     try file.write("testydoodle\n");
 }
-
-//fn replace_in_place(replacee: []const u8, replacement: []u8, original: [][]u8) void {
-//    for (original) |word, index| {
-//        if (std.mem.eql(u8, word, replacee)) {
-//            original[index] = replacement;
-//        }
-//    }
-//}
 
 fn valid_event(event: *inotify_bridge.inotify_event) bool {
     const counter = struct {
@@ -178,21 +171,6 @@ fn concat_args(allocator: *std.mem.Allocator) ![][]u8 {
 
     for (os.argv[1..arg_count]) |i, n| {
         list_of_strings[n] = std.mem.toSlice(u8, i);
-    }
-    return list_of_strings;
-}
-
-fn concat_args_old(allocator: *std.mem.Allocator) ![][]u8 {
-    var args = std.process.args();
-    const arg_count = args.inner.count;
-    const list_of_strings = try allocator.alloc([]u8, arg_count - 1);
-
-    _ = args.inner.skip();
-    while (args.nextPosix()) |arg| {
-        const string = try allocator.alloc(u8, arg.len);
-        std.mem.copy(u8, string, arg);
-        // Removing two from index because args[0] == index 1 and because we are ignoring arg[0]
-        list_of_strings[args.inner.index - 2] = string;
     }
     return list_of_strings;
 }
