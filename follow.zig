@@ -9,6 +9,14 @@
 // Should we have a separate thread just for
 // reading inotify events, to ensure none get skipped?
 
+// Add vim flag
+// requires new files to be written to once before their events
+// are registered.
+// Used to mitigate vim buffers from creating events
+
+// Add watch for each file added to a directory
+// and only watch for file creation/deletion in a directory
+
 const std = @import("std");
 const os = std.os;
 const dict = std.hash_map;
