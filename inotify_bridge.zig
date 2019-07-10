@@ -82,7 +82,7 @@ pub const inotify = struct {
         _ = try self.hashmap.put(watchid, filename);
     }
 
-    pub fn remove_watch(self: *Self, watch_descriptor: i32) ?self.hashmap.KV {
+    pub fn remove_watch(self: *Self, watch_descriptor: i32) ?hashmap_type.KV {
         os.inotify_rm_watch(self.inotify_fd, watch_descriptor);
         return self.hashmap.remove(watch_descriptor);
     }
