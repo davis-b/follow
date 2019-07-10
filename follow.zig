@@ -1,3 +1,14 @@
+// follow.zig - a program designed to watch specific files
+// and execute user provided commands on writes to watched files.
+
+//TODO:
+//Add list of files to specifically ignore,
+//even if found inside a watched directory.
+// Allow globbing for above blacklist.
+
+// Should we have a separate thread just for
+// reading inotify events, to ensure none get skipped?
+
 const std = @import("std");
 const os = std.os;
 const dict = std.hash_map;
@@ -8,7 +19,7 @@ const assert = std.debug.assert;
 const inotify_bridge = @import("inotify_bridge.zig");
 
 const max_tracked_items = u32;
-const inotify_watch_flags = os.IN_CLOSE_WRITE;
+const inotify_watch_flags = os.IN_CLOSE_WRITE | os.IN_DELETE_SELF;
 const filename_fill_flag = "%f";
 
 comptime {
@@ -70,7 +81,7 @@ pub fn main() !void {
         var filepath: []u8 = undefined;
         while (true) {
             full_event = inotify.next_event();
-            if (!valid_event(full_event.event)) continue;
+            if (!valid_event(full_event, &inotify)) continue;
             if (full_event.event.name) |filename| {
                 filepath = std.fs.path.joinPosix(dallocator, [_][]const u8{ full_event.watched_name, filename }) catch |err| {
                     warn("Encountered '{}' while allocating memory for a concatenation of '{}' and '{}'\n", err, full_event.watched_name, filename);
@@ -99,7 +110,7 @@ pub fn main() !void {
         execve_command[2] = argv_commands;
         while (true) {
             full_event = inotify.next_event();
-            if (!valid_event(full_event.event)) continue;
+            if (!valid_event(full_event, &inotify)) continue;
             run_command(dallocator, &execve_command, &envmap) catch |err| {
                 warn("Encountered '{}' while forking before running command {}\n", err, argv_commands);
                 continue;
@@ -117,39 +128,45 @@ fn run_command(allocator: *std.mem.Allocator, command: [][]const u8, envmap: *co
     } else {
         const status = os.waitpid(pid, 0);
         // while status != what we're looking for { status = waitpid }
-        warn("child exited with status: {}\n", status);
+        if (status != 0) warn("child process exited with status: {}\n", status);
     }
 }
 
-fn valid_event(event: *inotify_bridge.inotify_event) bool {
-    const counter = struct {
-        var count: u8 = 0;
-    };
-    const close_write = event.mask & os.linux.IN_CLOSE_WRITE;
-    const deleted = event.mask & os.linux.IN_IGNORED;
-    if (close_write == 0 or deleted != 0) return false; // return error.UnexepectedEvent
-    counter.count += 1;
-    const dir = (event.len != 0);
-    return true;
+fn valid_event(full_event: *inotify_bridge.expanded_inotify_event, inotify: *inotify_bridge.inotify) bool {
+    const event = full_event.event;
+    const close_write = event.mask & os.linux.IN_CLOSE_WRITE != 0;
+    const unwatched = event.mask & os.linux.IN_IGNORED != 0;
+    const deleted = event.mask & os.linux.IN_DELETE_SELF != 0;
+    const any_deleted = (deleted or unwatched);
+
+    // Is inotify only sending deleted or unwatched, or is it sending both
+    // and we're only receiving/processing one?
+    // Could that be a race condition? If we receive both a deleted and unwatched
+    // for a single file swap, we could end up calling "user_command" twice by accident.
+    if (any_deleted) {
+        var stat: os.Stat = undefined;
+        var is_file: bool = undefined;
+        if (event.name) |filename| { // file indirectly watched via watched dir
+            is_file = (os.system.stat(filename.ptr, &stat) == 0);
+        } else {
+            // TODO: Decide if we return true on the existence of any file, or only if a file is "trackable"?
+            // is this a race condition? If a file is being replaced by, for example, a .swp file
+            // Could this code be called in the middle, after deletion and before movement of .swp?
+            is_file = (os.system.stat(full_event.watched_name.ptr, &stat) == 0);
+            _ = inotify.hashmap.remove(event.wd);
+            if (trackable_file(full_event.watched_name)) {
+                inotify.add_watch(full_event.watched_name, inotify_watch_flags) catch return false;
+            }
+        }
+        return is_file;
+    }
+    return close_write;
 }
 
 fn enumerate_files(argv: [][]u8) InputError!max_tracked_items {
-    var stat: os.Stat = undefined;
     for (argv) |filename, index| {
-        const failure = (os.system.stat(filename.ptr, &stat) != 0);
-        if (failure) {
-            // If we have "failure" it means we've reached an argument that we can't "stat".
-            // So there would be no point in the following S_ISFILE functions.
-        } else if (os.system.S_ISREG(stat.mode)) {
-            continue;
-        } else if (os.system.S_ISDIR(stat.mode)) {
-            continue;
-        }
-        // Alternative form. Less easily extensible, more or less readable?
-        //if (!failure and (os.system.S_ISREG(stat.mode) or os.system.S_ISDIR(stat.mode))) continue;
+        if (trackable_file(filename)) continue;
 
-        // At this point we have reached an argument that is
-        // either not a file or not a dir.
         if (index >= std.math.maxInt(max_tracked_items)) {
             return error.TooManyTrackedFiles;
         }
@@ -160,6 +177,15 @@ fn enumerate_files(argv: [][]u8) InputError!max_tracked_items {
     } else {
         return error.NoArgumentsGiven;
     }
+}
+
+fn trackable_file(filename: []u8) bool {
+    var stat: os.Stat = undefined;
+    const failure = (os.system.stat(filename.ptr, &stat) != 0);
+    if (failure) {
+        return false;
+    }
+    return os.system.S_ISREG(stat.mode) or os.system.S_ISDIR(stat.mode);
 }
 
 fn concat_args(allocator: *std.mem.Allocator) ![][]u8 {
