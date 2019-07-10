@@ -65,7 +65,11 @@ pub fn main() !void {
         inotify.add_watch(filename, inotify_watch_flags) catch
             |err| return warn("{} while trying to follow '{}'\n", err, filename);
     }
-    const fill_flag_indexes_opt: ?[]usize = try locate_needle_indexes(dallocator, filename_fill_flag[0..], user_commands);
+    const fill_flag_indexes_opt: ?[]usize = try locate_needle_indexes(
+        dallocator,
+        filename_fill_flag[0..],
+        user_commands,
+    );
     defer if (fill_flag_indexes_opt) |ff_indexes| dallocator.free(ff_indexes);
 
     var execve_command = [_][]const u8{
@@ -81,10 +85,17 @@ pub fn main() !void {
         var filepath: []u8 = undefined;
         while (true) {
             full_event = inotify.next_event();
-            if (!valid_event(full_event, &inotify)) continue;
+            const event_type: EventType = discover_event_type(full_event, &inotify);
+            if (event_type == EventType.Unexpected or event_type == EventType.Deleted) continue;
+            if (event_type == EventType.Replaced) rewatch_replaced_file(full_event, &inotify);
             if (full_event.event.name) |filename| {
                 filepath = std.fs.path.joinPosix(dallocator, [_][]const u8{ full_event.watched_name, filename }) catch |err| {
-                    warn("Encountered '{}' while allocating memory for a concatenation of '{}' and '{}'\n", err, full_event.watched_name, filename);
+                    warn(
+                        "Encountered '{}' while allocating memory for a concatenation of '{}' and '{}'\n",
+                        err,
+                        full_event.watched_name,
+                        filename,
+                    );
                     continue;
                 };
             } else {
@@ -110,7 +121,9 @@ pub fn main() !void {
         execve_command[2] = argv_commands;
         while (true) {
             full_event = inotify.next_event();
-            if (!valid_event(full_event, &inotify)) continue;
+            const event_type: EventType = discover_event_type(full_event, &inotify);
+            if (event_type == EventType.Unexpected or event_type == EventType.Deleted) continue;
+            if (event_type == EventType.Replaced) rewatch_replaced_file(full_event, &inotify);
             run_command(dallocator, &execve_command, &envmap) catch |err| {
                 warn("Encountered '{}' while forking before running command {}\n", err, argv_commands);
                 continue;
@@ -132,35 +145,54 @@ fn run_command(allocator: *std.mem.Allocator, command: [][]const u8, envmap: *co
     }
 }
 
-fn valid_event(full_event: *inotify_bridge.expanded_inotify_event, inotify: *inotify_bridge.inotify) bool {
+const EventType = enum {
+    CloseWrite,
+    Deleted,
+    Replaced,
+    Unexpected,
+};
+
+fn discover_event_type(
+    full_event: *inotify_bridge.expanded_inotify_event,
+    inotify: *inotify_bridge.inotify,
+) EventType {
     const event = full_event.event;
     const close_write = event.mask & os.linux.IN_CLOSE_WRITE != 0;
     const unwatched = event.mask & os.linux.IN_IGNORED != 0;
     const deleted = event.mask & os.linux.IN_DELETE_SELF != 0;
     const any_deleted = (deleted or unwatched);
 
+    if (any_deleted) {
+        var stat: os.Stat = undefined;
+        var file_exists: bool = undefined;
+        if (event.name) |filename| { // file indirectly watched via watched dir
+            file_exists = (os.system.stat(filename.ptr, &stat) == 0);
+        } else {
+            file_exists = (os.system.stat(full_event.watched_name.ptr, &stat) == 0);
+        }
+        if (file_exists) return EventType.Replaced;
+        return EventType.Deleted;
+    }
+    if (close_write) return EventType.CloseWrite;
+    return EventType.Unexpected;
+}
+
+fn rewatch_replaced_file(
+    full_event: *inotify_bridge.expanded_inotify_event,
+    inotify: *inotify_bridge.inotify,
+) void {
     // Is inotify only sending deleted or unwatched, or is it sending both
     // and we're only receiving/processing one?
     // Could that be a race condition? If we receive both a deleted and unwatched
     // for a single file swap, we could end up calling "user_command" twice by accident.
-    if (any_deleted) {
-        var stat: os.Stat = undefined;
-        var is_file: bool = undefined;
-        if (event.name) |filename| { // file indirectly watched via watched dir
-            is_file = (os.system.stat(filename.ptr, &stat) == 0);
-        } else {
-            // TODO: Decide if we return true on the existence of any file, or only if a file is "trackable"?
-            // is this a race condition? If a file is being replaced by, for example, a .swp file
-            // Could this code be called in the middle, after deletion and before movement of .swp?
-            is_file = (os.system.stat(full_event.watched_name.ptr, &stat) == 0);
-            _ = inotify.hashmap.remove(event.wd);
-            if (trackable_file(full_event.watched_name)) {
-                inotify.add_watch(full_event.watched_name, inotify_watch_flags) catch return false;
-            }
-        }
-        return is_file;
+
+    // TODO: Decide if we return true on the existence of any file, or only if a file is "trackable"?
+    // is this a race condition? If a file is being replaced by, for example, a .swp file
+    // Could this code be called in the middle, after deletion and before movement of .swp?
+    _ = inotify.hashmap.remove(full_event.event.wd);
+    if (trackable_file(full_event.watched_name)) {
+        inotify.add_watch(full_event.watched_name, inotify_watch_flags) catch return;
     }
-    return close_write;
 }
 
 fn enumerate_files(argv: [][]u8) InputError!max_tracked_items {
