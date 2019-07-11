@@ -17,6 +17,51 @@
 // Add watch for each file added to a directory
 // and only watch for file creation/deletion in a directory
 
+// We could rewatch but not run command if file has been replaced less than x seconds ago
+// Could ignore file if creation time < x seconds ago
+
+// Maintain modified state for each file using "IN_MODIFY" inotify flag.
+// If a file received "IN_CLOSE_WRITE" but never had "IN_MODIFY", we may ignore the event.
+
+// Inotify watch flags / masks. Courtesy of "https://linux.die.net/man/7/inotify"
+//    IN_ACCESS
+//    File was accessed (read) (*).
+//
+//    IN_ATTRIB
+//    Metadata changed, e.g., permissions, timestamps, extended attributes, link count (since Linux 2.6.25), UID, GID, etc. (*).
+//
+//    IN_CLOSE_WRITE
+//    File opened for writing was closed (*).
+//
+//    IN_CLOSE_NOWRITE
+//    File not opened for writing was closed (*).
+//
+//    IN_CREATE
+//    File/directory created in watched directory (*).
+//
+//    IN_DELETE
+//    File/directory deleted from watched directory (*).
+//
+//    IN_DELETE_SELF
+//    Watched file/directory was itself deleted.
+//
+//    IN_MODIFY
+//    File was modified (*).
+//
+//    IN_MOVE_SELF
+//    Watched file/directory was itself moved.
+//
+//    IN_MOVED_FROM
+//    File moved out of watched directory (*).
+//
+//    IN_MOVED_TO
+//    File moved into watched directory (*).
+//
+//    IN_OPEN
+//    File was opened (*).
+
+//    When monitoring a directory, the events marked with an asterisk (*) above can occur for files in the directory, in which case the name field in the returned inotify_event structure identifies the name of the file within the directory.
+
 const std = @import("std");
 const os = std.os;
 const dict = std.hash_map;
@@ -27,7 +72,7 @@ const assert = std.debug.assert;
 const inotify_bridge = @import("inotify_bridge.zig");
 
 const max_tracked_items = u32;
-const inotify_watch_flags = os.IN_CLOSE_WRITE | os.IN_DELETE_SELF;
+const inotify_watch_flags = os.IN_CLOSE_WRITE; //| os.IN_DELETE_SELF;
 const filename_fill_flag = "%f";
 
 comptime {
@@ -95,7 +140,7 @@ pub fn main() !void {
             full_event = inotify.next_event();
             const event_type: EventType = discover_event_type(full_event, &inotify);
             if (event_type == EventType.Unexpected or event_type == EventType.Deleted) continue;
-            if (event_type == EventType.Replaced) rewatch_replaced_file(full_event, &inotify);
+            if (event_type == EventType.Replaced and full_event.event.name == null) rewatch_replaced_file(full_event, &inotify);
             if (full_event.event.name) |filename| {
                 filepath = std.fs.path.joinPosix(dallocator, [_][]const u8{ full_event.watched_name, filename }) catch |err| {
                     warn(
@@ -109,7 +154,7 @@ pub fn main() !void {
             } else {
                 filepath = full_event.watched_name;
             }
-            defer if (full_event.event.len != 0) dallocator.free(filepath);
+            defer if (full_event.event.name != null) dallocator.free(filepath);
             for (fill_flag_indexes) |index| {
                 user_commands[index] = filepath;
             }
@@ -125,13 +170,16 @@ pub fn main() !void {
             };
         }
     } else {
-        const argv_commands = try std.mem.join(allocator, " ", user_commands);
+        const argv_commands = try std.mem.join(allocator, " ", user_commands) catch |err| {
+            warn("Encountered '{}' while allocating memory for a concatenation input commands\n", err);
+            continue;
+        };
         execve_command[2] = argv_commands;
         while (true) {
             full_event = inotify.next_event();
             const event_type: EventType = discover_event_type(full_event, &inotify);
             if (event_type == EventType.Unexpected or event_type == EventType.Deleted) continue;
-            if (event_type == EventType.Replaced) rewatch_replaced_file(full_event, &inotify);
+            if (event_type == EventType.Replaced and full_event.event.name == null) rewatch_replaced_file(full_event, &inotify);
             run_command(dallocator, &execve_command, &envmap) catch |err| {
                 warn("Encountered '{}' while forking before running command {}\n", err, argv_commands);
                 continue;
