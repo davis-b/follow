@@ -23,6 +23,11 @@
 // Maintain modified state for each file using "IN_MODIFY" inotify flag.
 // If a file received "IN_CLOSE_WRITE" but never had "IN_MODIFY", we may ignore the event.
 
+// Add user flag to kill previous process when we would want to run a new command
+// Instead of pidwait we would add NOSIGCHILD or something like that to fork.
+// Then on each new command, we would see if the last command's pid is running,
+// and kill it if so.
+
 // Inotify watch flags / masks. Courtesy of "https://linux.die.net/man/7/inotify"
 //    IN_ACCESS
 //    File was accessed (read) (*).
@@ -81,15 +86,31 @@ comptime {
     }
 }
 
-fn usage() void {
-    warn("Usage descriptor\n");
-}
+const EventType = enum {
+    CloseWrite,
+    Replaced,
+    ReplacedRecently,
+    ReplacedSimilar,
+    Deleted,
+    Unexpected,
+};
+
+const FileReplaceHistory = struct {
+    var last_time: u64 = 0;
+    var last_size: i64 = 0;
+    const activation_cooldown_s: u8 = 1;
+    const min_activation_cooldown_s: f16 = 0.5;
+};
 
 const InputError = error{
     TooManyTrackedFiles,
     NoArgumentsGiven,
     NoFilesFound,
 };
+
+fn usage() void {
+    warn("Usage descriptor\n");
+}
 
 pub fn main() !void {
     var direct_allocator = std.heap.DirectAllocator.init();
@@ -139,8 +160,11 @@ pub fn main() !void {
         while (true) {
             full_event = inotify.next_event();
             const event_type: EventType = discover_event_type(full_event, &inotify);
-            if (event_type == EventType.Unexpected or event_type == EventType.Deleted) continue;
-            if (event_type == EventType.Replaced and full_event.event.name == null) rewatch_replaced_file(full_event, &inotify);
+            _ = if (full_event.event.name == null) switch (event_type) {
+                .Replaced, .ReplacedRecently, .ReplacedSimilar => rewatch_replaced_file(full_event, &inotify),
+                else => null,
+            };
+            if (!valid_event(event_type)) continue;
             if (full_event.event.name) |filename| {
                 filepath = std.fs.path.joinPosix(dallocator, [_][]const u8{ full_event.watched_name, filename }) catch |err| {
                     warn(
@@ -159,7 +183,7 @@ pub fn main() !void {
                 user_commands[index] = filepath;
             }
             const argv_commands = std.mem.join(dallocator, " ", user_commands) catch |err| {
-                warn("Encountered '{}' while allocating memory for a concatenation input commands\n", err);
+                warn("Encountered '{}' while allocating memory for a concatenation of input commands\n", err);
                 continue;
             };
             defer dallocator.free(argv_commands);
@@ -170,21 +194,32 @@ pub fn main() !void {
             };
         }
     } else {
-        const argv_commands = try std.mem.join(allocator, " ", user_commands) catch |err| {
-            warn("Encountered '{}' while allocating memory for a concatenation input commands\n", err);
-            continue;
+        const argv_commands = std.mem.join(allocator, " ", user_commands) catch |err| {
+            warn("Encountered '{}' while allocating memory for a concatenation of input commands\n", err);
+            return;
         };
         execve_command[2] = argv_commands;
         while (true) {
             full_event = inotify.next_event();
             const event_type: EventType = discover_event_type(full_event, &inotify);
-            if (event_type == EventType.Unexpected or event_type == EventType.Deleted) continue;
-            if (event_type == EventType.Replaced and full_event.event.name == null) rewatch_replaced_file(full_event, &inotify);
+            _ = if (full_event.event.name == null) switch (event_type) {
+                .Replaced, .ReplacedRecently, .ReplacedSimilar => rewatch_replaced_file(full_event, &inotify),
+                else => null,
+            };
+
+            if (!valid_event(event_type)) continue;
             run_command(dallocator, &execve_command, &envmap) catch |err| {
                 warn("Encountered '{}' while forking before running command {}\n", err, argv_commands);
                 continue;
             };
         }
+    }
+}
+
+fn valid_event(event_type: EventType) bool {
+    switch (event_type) {
+        .Unexpected, .Deleted, .ReplacedRecently, .ReplacedSimilar => return false,
+        .CloseWrite, .Replaced => return true,
     }
 }
 
@@ -200,13 +235,6 @@ fn run_command(allocator: *std.mem.Allocator, command: [][]const u8, envmap: *co
         if (status != 0) warn("child process exited with status: {}\n", status);
     }
 }
-
-const EventType = enum {
-    CloseWrite,
-    Deleted,
-    Replaced,
-    Unexpected,
-};
 
 fn discover_event_type(
     full_event: *inotify_bridge.expanded_inotify_event,
@@ -226,7 +254,20 @@ fn discover_event_type(
         } else {
             file_exists = (os.system.stat(full_event.watched_name.ptr, &stat) == 0);
         }
-        if (file_exists) return EventType.Replaced;
+        defer FileReplaceHistory.last_time = std.time.timestamp();
+        defer FileReplaceHistory.last_size = stat.size;
+        const since_last_replacement = std.time.timestamp() - FileReplaceHistory.last_time;
+        const recently_replaced: bool = since_last_replacement < FileReplaceHistory.activation_cooldown_s;
+        const too_recently_replaced: bool = @intToFloat(f16, since_last_replacement) < FileReplaceHistory.min_activation_cooldown_s;
+        if (recently_replaced and FileReplaceHistory.last_size == stat.size) {
+            return EventType.ReplacedSimilar;
+        }
+        if (too_recently_replaced) {
+            return EventType.ReplacedRecently;
+        }
+        if (file_exists) {
+            return EventType.Replaced;
+        }
         return EventType.Deleted;
     }
     if (close_write) return EventType.CloseWrite;
@@ -237,6 +278,11 @@ fn rewatch_replaced_file(
     full_event: *inotify_bridge.expanded_inotify_event,
     inotify: *inotify_bridge.inotify,
 ) void {
+    // Intended to be used when a watched file is replaced. The original is deleted and therefore no longer watched
+    // by inotify. So we must re-watch it. We first remove the old entry from our hashmap, just to be safe.
+    // We probably shouldn't manually reach into the hashmap ourselves, and simply leave it to the inotify_bridge.
+    // This would be cleaner and allow us to change the storage backend of inotify_bridge more easily.
+
     // Is inotify only sending deleted or unwatched, or is it sending both
     // and we're only receiving/processing one?
     // Could that be a race condition? If we receive both a deleted and unwatched
@@ -246,7 +292,7 @@ fn rewatch_replaced_file(
     // is this a race condition? If a file is being replaced by, for example, a .swp file
     // Could this code be called in the middle, after deletion and before movement of .swp?
     _ = inotify.hashmap.remove(full_event.event.wd);
-    if (trackable_file(full_event.watched_name)) {
+    if (full_event.event.name == null and trackable_file(full_event.watched_name)) {
         inotify.add_watch(full_event.watched_name, inotify_watch_flags) catch return;
     }
 }

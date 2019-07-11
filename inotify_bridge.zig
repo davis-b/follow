@@ -7,11 +7,6 @@
 // and whatever code interfaces with this library could simply pull from
 // the queue.
 
-// Should we return a new inotify_event struct for each event,
-// or reuse the same one?
-// Let's just reuse the same one. If require new structs for each
-// event, they can use the function "read_event".
-
 const std = @import("std");
 const os = std.os;
 const mem = std.mem;
