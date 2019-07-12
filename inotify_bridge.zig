@@ -1,11 +1,5 @@
-// These custom events have an extra field
-// event.tracked_item_name
-// Which would be a hashmap or simple list under the hood,
-// matching WDs of tracked items to names given.
-
-// could have one thread collecting events and adding them to a uueue
-// and whatever code interfaces with this library could simply pull from
-// the queue.
+// #inotify_bridge.zig
+// Handles some of the more general inotify use cases
 
 const std = @import("std");
 const os = std.os;
