@@ -38,7 +38,7 @@ const assert = std.debug.assert;
 
 const inotify_bridge = @import("inotify_bridge.zig");
 
-const max_tracked_items = u32;
+const tracked_items_t = u32;
 const inotify_watch_flags = os.IN_CLOSE_WRITE; //| os.IN_DELETE_SELF;
 const filename_fill_flag = "%f";
 
@@ -83,7 +83,7 @@ pub fn main() !void {
     const allocator = &arena.allocator;
 
     const argv: [][]u8 = try concat_args(allocator);
-    const file_count: max_tracked_items = enumerate_files(argv) catch |err| {
+    const file_count: tracked_items_t = enumerate_files(argv) catch |err| {
         switch (err) {
             error.TooManyTrackedFiles => return warn("{}\n", err),
             error.NoArgumentsGiven => return warn("{}\n", err),
@@ -259,17 +259,17 @@ fn rewatch_replaced_file(
     }
 }
 
-fn enumerate_files(argv: [][]u8) InputError!max_tracked_items {
+fn enumerate_files(argv: [][]u8) InputError!tracked_items_t {
     for (argv) |filename, index| {
         if (trackable_file(filename)) continue;
 
-        if (index >= std.math.maxInt(max_tracked_items)) {
+        if (index >= std.math.maxInt(tracked_items_t)) {
             return error.TooManyTrackedFiles;
         }
         if (index == 0) {
             return error.NoFilesFound;
         }
-        return @intCast(max_tracked_items, index);
+        return @intCast(tracked_items_t, index);
     } else {
         return error.NoArgumentsGiven;
     }
