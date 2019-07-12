@@ -28,6 +28,8 @@
 // Then on each new command, we would see if the last command's pid is running,
 // and kill it if so.
 
+// Could track stat.mtime of files and ignore closing of files opened with write if no changes were made
+
 const std = @import("std");
 const os = std.os;
 const dict = std.hash_map;
