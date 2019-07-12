@@ -2,12 +2,12 @@
 // and execute user provided commands on writes to watched files.
 
 //TODO:
-//Add list of files to specifically ignore,
-//even if found inside a watched directory.
+// Add list of files to specifically ignore,
+// even if found inside a watched directory.
 // Allow globbing for above blacklist.
 
 // Should we have a separate thread just for
-// reading inotify events, to ensure none get skipped?
+// reading inotify events, to ensure fewer get skipped?
 
 // Add vim flag
 // requires new files to be written to once before their events
@@ -17,9 +17,6 @@
 // Add watch for each file added to a directory
 // and only watch for file creation/deletion in a directory
 
-// We could rewatch but not run command if file has been replaced less than x seconds ago
-// Could ignore file if creation time < x seconds ago
-
 // Maintain modified state for each file using "IN_MODIFY" inotify flag.
 // If a file received "IN_CLOSE_WRITE" but never had "IN_MODIFY", we may ignore the event.
 
@@ -28,7 +25,9 @@
 // Then on each new command, we would see if the last command's pid is running,
 // and kill it if so.
 
-// Could track stat.mtime of files and ignore closing of files opened with write if no changes were made
+// Could track stat.mtime of files to allow ignoring the closing of files opened with write if no changes were made
+
+// Add counter flag '%i'. When used in a command it becomes the number of previously ran commands.
 
 const std = @import("std");
 const os = std.os;
