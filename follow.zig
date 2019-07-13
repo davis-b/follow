@@ -58,10 +58,10 @@ const EventType = enum {
 };
 
 const FileReplaceHistory = struct {
-    var last_time: isize = 0;
+    var last_time: os.timespec = os.timespec{ .tv_sec = 100, .tv_nsec = 100 };
     var last_size: i64 = 0;
-    const activation_cooldown_s: isize = 1;
-    const min_activation_cooldown_s: f16 = 0.5;
+    const activation_cooldown_s: f64 = 1.0;
+    const minimum_activation_cooldown_s: f64 = 0.5;
 };
 
 const InputError = error{
@@ -208,11 +208,16 @@ fn discover_event_type(
         } else {
             file_exists = (os.system.stat(full_event.watched_name.ptr, &stat) == 0);
         }
-        defer FileReplaceHistory.last_time = stat.mtim.tv_sec;
+        defer FileReplaceHistory.last_time = stat.mtim;
         defer FileReplaceHistory.last_size = stat.size;
-        const since_last_replacement = stat.mtim.tv_sec - FileReplaceHistory.last_time;
-        const recently_replaced: bool = since_last_replacement < FileReplaceHistory.activation_cooldown_s;
-        const too_recently_replaced: bool = @intToFloat(f32, since_last_replacement) < FileReplaceHistory.min_activation_cooldown_s;
+
+        const curtime = total_time_sec(stat.mtim);
+        const oldtime = total_time_sec(FileReplaceHistory.last_time);
+        const delta = curtime - oldtime;
+
+        const recently_replaced: bool = delta < FileReplaceHistory.activation_cooldown_s;
+        const too_recently_replaced: bool = delta < FileReplaceHistory.minimum_activation_cooldown_s;
+
         if (recently_replaced and FileReplaceHistory.last_size == stat.size) {
             return EventType.ReplacedSimilar;
         }
@@ -226,6 +231,44 @@ fn discover_event_type(
     }
     if (close_write) return EventType.CloseWrite;
     return EventType.Unexpected;
+}
+
+fn total_time_sec(timestruct: os.timespec) f64 {
+    const sec: f64 = @intToFloat(f64, timestruct.tv_sec);
+    const nsec: f64 = @intToFloat(f64, timestruct.tv_nsec);
+    const nsec_reduced: f64 = @divFloor(nsec, std.time.us_per_s) * 0.001;
+    const totaltime: f64 = sec + nsec_reduced;
+    return totaltime;
+}
+
+test "total time float accuracy" {
+    var current_time: os.timespec = os.timespec{ .tv_sec = 123456789, .tv_nsec = 223456789 };
+    var last_time: os.timespec = os.timespec{ .tv_sec = 123456789, .tv_nsec = 123456789 };
+    assert(current_time.tv_sec >= last_time.tv_sec);
+    const total_current: f64 = total_time_sec(current_time);
+    const total_last: f64 = total_time_sec(last_time);
+    var delta = total_current - total_last;
+    assert(delta < 1.0);
+    warn(" delta: {.}\n", delta);
+    assert(delta >= 0.1);
+
+    current_time.tv_nsec = 923456789;
+    last_time.tv_nsec = 123456789;
+    delta = total_time_sec(current_time) - total_time_sec(last_time);
+    assert(delta < 1.0);
+    assert(delta > 0.79);
+
+    current_time = os.timespec{ .tv_sec = 123456789, .tv_nsec = 223456789 };
+    last_time = os.timespec{ .tv_sec = 123456788, .tv_nsec = 123456789 };
+    delta = total_time_sec(current_time) - total_time_sec(last_time);
+    assert(delta > 1.0);
+    assert(delta < 1.2);
+
+    current_time = os.timespec{ .tv_sec = 123456789, .tv_nsec = 123456789 };
+    last_time = os.timespec{ .tv_sec = 123456788, .tv_nsec = 923456789 };
+    delta = total_time_sec(current_time) - total_time_sec(last_time);
+    assert(delta < 0.3);
+    assert(delta > 0.1);
 }
 
 fn rewatch_replaced_file(
