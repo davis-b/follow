@@ -2,9 +2,7 @@
 Follow is a command line program that runs user-given commands following a write to user-specified file(s).
 More specifically, following the closing of a file opened with write permissions.
 
-Follow attempts to run indefinitely; Follow does not end after a set amount of events.
-
-Follow waits for a forked child to finish running a user's command before it continues waiting for/reading events.
+Event handling is paused while commands are being ran.
 
 # Usage:
 > follow [files] [commands]
