@@ -71,7 +71,8 @@ const InputError = error{
 };
 
 fn usage(err: InputError) void {
-    warn("{}\nUsage: follow [files and/or directories] [command sent to /bin/sh]\n\n", err);
+    warn("{}\n", err);
+    warn("Usage: follow [files and/or directories] [command sent to /bin/sh]\n\n");
     warn("The entered command will be ran whenever a followed file:\n");
     warn("* gets closed after having been opened with write permissions.\n");
     warn("  Example: echo text > followed_filename, or saving a file in most programs\n");
@@ -127,17 +128,11 @@ pub fn main() !void {
                 .Replaced, .ReplacedRecently, .ReplacedSimilar => rewatch_replaced_file(full_event, &inotify),
                 else => null,
             };
-            if (!valid_event(event_type)) continue;
+            if (!valid_event(event_type)) {
+                continue;
+            }
             if (full_event.event.name) |filename| {
-                filepath = std.fs.path.joinPosix(dallocator, [_][]const u8{ full_event.watched_name, filename }) catch |err| {
-                    warn(
-                        "Encountered '{}' while allocating memory for a concatenation of '{}' and '{}'\n",
-                        err,
-                        full_event.watched_name,
-                        filename,
-                    );
-                    continue;
-                };
+                filepath = try std.fs.path.joinPosix(dallocator, [_][]const u8{ full_event.watched_name, filename });
             } else {
                 filepath = full_event.watched_name;
             }
@@ -145,22 +140,16 @@ pub fn main() !void {
             for (fill_flag_indexes) |index| {
                 user_commands[index] = filepath;
             }
-            const argv_commands = std.mem.join(dallocator, " ", user_commands) catch |err| {
-                warn("Encountered '{}' while allocating memory for a concatenation of input commands\n", err);
-                continue;
-            };
+            const argv_commands = try std.mem.join(dallocator, " ", user_commands);
             defer dallocator.free(argv_commands);
             execve_command[2] = argv_commands;
             run_command(dallocator, &execve_command, &envmap) catch |err| {
-                warn("Encountered '{}' while forking before running command {}\n", err, argv_commands);
+                warn("Encountered '{}' while forking before running command '{}'\n", err, argv_commands);
                 continue;
             };
         }
     } else {
-        const argv_commands = std.mem.join(allocator, " ", user_commands) catch |err| {
-            warn("Encountered '{}' while allocating memory for a concatenation of input commands\n", err);
-            return;
-        };
+        const argv_commands = try std.mem.join(allocator, " ", user_commands);
         execve_command[2] = argv_commands;
         while (true) {
             full_event = inotify.next_event();
@@ -170,9 +159,11 @@ pub fn main() !void {
                 else => null,
             };
 
-            if (!valid_event(event_type)) continue;
+            if (!valid_event(event_type)) {
+                continue;
+            }
             run_command(dallocator, &execve_command, &envmap) catch |err| {
-                warn("Encountered '{}' while forking before running command {}\n", err, argv_commands);
+                warn("Encountered '{}' while forking before running command '{}'\n", err, argv_commands);
                 continue;
             };
         }
@@ -262,8 +253,9 @@ fn rewatch_replaced_file(
 
 fn enumerate_files(argv: [][]u8) InputError!tracked_items_t {
     for (argv) |filename, index| {
-        if (trackable_file(filename)) continue;
-
+        if (trackable_file(filename)) {
+            continue;
+        }
         if (index >= std.math.maxInt(tracked_items_t)) {
             return error.TooManyTrackedFiles;
         }
