@@ -58,9 +58,9 @@ const EventType = enum {
 };
 
 const FileReplaceHistory = struct {
-    var last_time: u64 = 0;
+    var last_time: isize = 0;
     var last_size: i64 = 0;
-    const activation_cooldown_s: u8 = 1;
+    const activation_cooldown_s: isize = 1;
     const min_activation_cooldown_s: f16 = 0.5;
 };
 
@@ -208,11 +208,11 @@ fn discover_event_type(
         } else {
             file_exists = (os.system.stat(full_event.watched_name.ptr, &stat) == 0);
         }
-        defer FileReplaceHistory.last_time = std.time.timestamp();
+        defer FileReplaceHistory.last_time = stat.mtim.tv_sec;
         defer FileReplaceHistory.last_size = stat.size;
-        const since_last_replacement = std.time.timestamp() - FileReplaceHistory.last_time;
+        const since_last_replacement = stat.mtim.tv_sec - FileReplaceHistory.last_time;
         const recently_replaced: bool = since_last_replacement < FileReplaceHistory.activation_cooldown_s;
-        const too_recently_replaced: bool = @intToFloat(f16, since_last_replacement) < FileReplaceHistory.min_activation_cooldown_s;
+        const too_recently_replaced: bool = @intToFloat(f32, since_last_replacement) < FileReplaceHistory.min_activation_cooldown_s;
         if (recently_replaced and FileReplaceHistory.last_size == stat.size) {
             return EventType.ReplacedSimilar;
         }
