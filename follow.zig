@@ -70,8 +70,13 @@ const InputError = error{
     NoFilesFound,
 };
 
-fn usage() void {
-    warn("Usage descriptor\n");
+fn usage(err: InputError) void {
+    warn("{}\nUsage: follow [files and/or directories] [command sent to /bin/sh]\n\n", err);
+    warn("The entered command will be ran whenever a followed file:\n");
+    warn("* gets closed after having been opened with write permissions.\n");
+    warn("  Example: echo text > followed_filename, or saving a file in most programs\n");
+    warn("* is replaced by another file.\n");
+    warn("  Example: mv anyfile followed_filename, or vim saving a file using a swap file.\n");
 }
 
 pub fn main() !void {
@@ -84,11 +89,7 @@ pub fn main() !void {
 
     const argv: [][]u8 = try concat_args(allocator);
     const file_count: tracked_items_t = enumerate_files(argv) catch |err| {
-        switch (err) {
-            error.TooManyTrackedFiles => return warn("{}\n", err),
-            error.NoArgumentsGiven => return warn("{}\n", err),
-            error.NoFilesFound => return warn("{}\n", err),
-        }
+        return usage(err);
     };
     const files = argv[0..file_count];
     const user_commands = argv[file_count..];
