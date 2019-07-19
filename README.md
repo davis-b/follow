@@ -4,6 +4,8 @@ More specifically, following the closing of a file opened with write permissions
 
 Event handling is paused while commands are being ran.
 
+Follow works solely on Linux operating systems.
+
 # Usage:
 > follow [files] [commands]
 
@@ -16,7 +18,8 @@ There is one replacement that Follow will make in the command. Follow will turn 
 
 > follow file1.c dir/file2.zig another-file.txt echo write event detected at %f '&&' echo command 2
 
-User opens dir/file2.zig with write permissions, and then closes the file. Output would be:
+User opens dir/file2.zig with write permissions, and then closes the file. This happens when you save a file in most text editors.
+Output would be:
 
 	write event detected at dir/file2.zig
 
@@ -29,7 +32,7 @@ One would achieve the same outcome in this particular scenario if the original c
 # Fun Facts
 Follow utilizes the inotify api to quickly react to write events.
 
-Follow treats Vim writes (replacing a file with a buffer) as regular write events.
+Follow treats Vim style "writes" (replacing a file with a different file) as regular write events.
 
 Follow was originally written by me in C, this is a reimplemntation and improvement in Zig.
 
