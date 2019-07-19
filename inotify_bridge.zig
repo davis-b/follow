@@ -61,9 +61,8 @@ pub const inotify = struct {
     }
 
     pub fn deinit(self: *Self) void {
-        // allocator.destroy
         self.hashmap.deinit();
-        //self.remove_watch();
+        // TODO //self.remove_watch(); for each watched item
     }
 
     pub fn add_watch(self: *Self, filename: []u8, flags: u32) !void {
@@ -82,23 +81,6 @@ pub const inotify = struct {
         self.expanded_event.event = &self.event;
         self.expanded_event.watched_name = self.hashmap.getValue(self.event.wd) orelse unreachable;
         return &self.expanded_event;
-    }
-
-    pub fn read_events_async(self: *Self) void {
-        // todo: make async
-        var ptr = self.event_buffer[0..].ptr;
-        const end_ptr = self.event_buffer.len;
-        while (true) : (ptr = event_buffer[0..].ptr) {
-            // const read_result = os.read(inotify_fd, event_buffer[0..]);
-            const read_result = os.linux.read(inotify_fd, &event_buffer, event_buffer.len);
-            //while (@ptrToInt(ptr) < @ptrToInt(end_ptr)) : (ptr += @sizeOf(inotify_event)) {
-            while (@ptrToInt(ptr) < @ptrToInt(end_ptr)) : (ptr += @sizeOf(std_inotify_event) + event.len) {
-                const event = @ptrCast(*std_inoitfy_event, ptr);
-                const custom_event: inotify_event = undefined;
-                read_event(ptr, &custom_event);
-                return custom_event;
-            }
-        }
     }
 };
 
@@ -119,5 +101,3 @@ pub fn read_event(bufferptr: [*]u8, event: *inotify_event) void {
     //event.name = name[0..namelen];
     event.name = if (event.len != 0) name[0..namelen] else null;
 }
-
-// *****************************************************************

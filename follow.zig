@@ -185,7 +185,6 @@ fn run_command(allocator: *std.mem.Allocator, command: [][]const u8, envmap: *co
         warn("Error : '{}'\n", err);
     } else {
         const status = os.waitpid(pid, 0);
-        // while status != what we're looking for { status = waitpid }
         if (status != 0) warn("child process exited with status: {}\n", status);
     }
 }
@@ -245,11 +244,9 @@ test "total time float accuracy" {
     var current_time: os.timespec = os.timespec{ .tv_sec = 123456789, .tv_nsec = 223456789 };
     var last_time: os.timespec = os.timespec{ .tv_sec = 123456789, .tv_nsec = 123456789 };
     assert(current_time.tv_sec >= last_time.tv_sec);
-    const total_current: f64 = total_time_sec(current_time);
-    const total_last: f64 = total_time_sec(last_time);
-    var delta = total_current - total_last;
-    assert(delta < 1.0);
+    var delta = total_time_sec(current_time) - total_time_sec(last_time);
     warn(" delta: {.}\n", delta);
+    assert(delta < 1.0);
     assert(delta >= 0.1);
 
     current_time.tv_nsec = 923456789;
