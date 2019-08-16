@@ -39,6 +39,7 @@ const assert = std.debug.assert;
 const inotify_bridge = @import("inotify_bridge.zig");
 
 const tracked_items_t = u32;
+const max_tracked_items = std.math.maxInt(tracked_items_t);
 const inotify_watch_flags = os.IN_CLOSE_WRITE; //| os.IN_DELETE_SELF;
 const filename_fill_flag = "%f";
 
@@ -75,7 +76,7 @@ fn usage(err: InputError) void {
     warn("Usage: follow [files and/or directories] [command sent to /bin/sh]\n\n");
     warn("The entered command will be ran whenever a followed file:\n");
     warn("* gets closed after having been opened with write permissions.\n");
-    warn("  Example: echo text > followed_filename, or saving a file in most programs\n");
+    warn("  Example: echo text > followed_filename, or saving a file in most programs.\n");
     warn("* is replaced by another file.\n");
     warn("  Example: mv anyfile followed_filename, or vim saving a file using a swap file.\n");
 }
@@ -296,7 +297,8 @@ fn enumerate_files(argv: [][]u8) InputError!tracked_items_t {
         if (trackable_file(filename)) {
             continue;
         }
-        if (index >= std.math.maxInt(tracked_items_t)) {
+        if (index >= max_tracked_items) {
+            warn("Max trackable files: {}\n", @intCast(tracked_items_t, max_tracked_items));
             return error.TooManyTrackedFiles;
         }
         if (index == 0) {
