@@ -12,7 +12,7 @@
 // Add vim flag
 // requires new files to be written to once before their events
 // are registered.
-// Used to mitigate vim buffers from creating events
+// Used to prevent vim buffers from creating events
 
 // Add watch for each file added to a directory
 // and only watch for file creation/deletion in a directory
@@ -73,10 +73,10 @@ const InputError = error{
 
 fn usage(err: InputError) void {
     warn("{}\n", err);
-    warn("Usage: follow [files and/or directories] [command sent to /bin/sh]\n\n");
-    warn("The entered command will be ran whenever a followed file:\n");
-    warn("* gets closed after having been opened with write permissions.\n");
-    warn("  Example: echo text > followed_filename, or saving a file in most programs.\n");
+    warn("Usage: follow [files and/or directories] [argument(s) sent to /bin/sh]\n\n");
+    warn("/bin/sh will be called with user supplied arguments when a followed file:\n");
+    warn("* is closed after having been opened with write permissions.\n");
+    warn("  Example: echo text > followed_filename\nor, saving a file in most programs.\n");
     warn("* is replaced by another file.\n");
     warn("  Example: mv anyfile followed_filename, or vim saving a file using a swap file.\n");
 }
