@@ -82,9 +82,7 @@ fn usage(err: InputError) void {
 }
 
 pub fn main() !void {
-    var direct_allocator = std.heap.DirectAllocator.init();
-    defer direct_allocator.deinit();
-    const dallocator = &direct_allocator.allocator;
+    const dallocator = std.heap.direct_allocator;
     var arena = std.heap.ArenaAllocator.init(dallocator);
     defer arena.deinit();
     const allocator = &arena.allocator;
