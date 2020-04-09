@@ -132,6 +132,11 @@ pub fn main() !void {
             }
             if (full_event.event.name) |filename| {
                 filepath = try std.fs.path.joinPosix(dallocator, [_][]const u8{ full_event.watched_name, filename });
+                var n: usize = filepath.len;
+                filepath = try dallocator.realloc(filepath, filepath.len + 2);
+                filepath[n + 1] = '"'; // final index of newly allocated memory
+                while (n > 0) : (n -= 1) filepath[n] = filepath[n - 1];
+                filepath[0] = '"';
             } else {
                 filepath = full_event.watched_name;
             }
