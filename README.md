@@ -34,6 +34,4 @@ Follow utilizes the inotify api to quickly react to write events.
 
 Follow treats Vim style "writes" (replacing a file with a different file) as regular write events.
 
-Follow was originally written by me in C, this is a reimplemntation and improvement in Zig.
-
 Written for version '0.4.0+2cbcf3f3' of Zig.
